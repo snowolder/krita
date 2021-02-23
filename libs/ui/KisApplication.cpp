@@ -274,11 +274,7 @@ bool KisApplication::event(QEvent *event)
     #ifdef Q_OS_MACOS
     if (event->type() == QEvent::FileOpen) {
         QFileOpenEvent *openEvent = static_cast<QFileOpenEvent *>(event);
-        if (d->mainWindow) {
-            emit fileOpenRequest(openEvent->file());
-        } else {
-            d->earlyFileOpenEvents.append(openEvent->file());
-        }
+        emit fileOpenRequest(openEvent->file());
         return true;
     }
     #endif
@@ -299,7 +295,7 @@ bool KisApplication::registerResources()
     reg->add(new KisResourceLoader<KisPngBrush>(ResourceSubType::PngBrushes, ResourceType::Brushes, i18n("Brush tips"), QStringList() << "image/png"));
 
     reg->add(new KisResourceLoader<KoSegmentGradient>(ResourceSubType::SegmentedGradients, ResourceType::Gradients, i18n("Gradients"), QStringList() << "application/x-gimp-gradient"));
-    reg->add(new KisResourceLoader<KoStopGradient>(ResourceSubType::StopGradients, ResourceType::Gradients, i18n("Gradients"), QStringList() << "application/x-karbon-gradient" << "image/svg+xml"));
+    reg->add(new KisResourceLoader<KoStopGradient>(ResourceSubType::StopGradients, ResourceType::Gradients, i18n("Gradients"), QStringList() << "image/svg+xml"));
 
     reg->add(new KisResourceLoader<KoColorSet>(ResourceType::Palettes, ResourceType::Palettes, i18n("Palettes"),
                                      QStringList() << KisMimeDatabase::mimeTypeForSuffix("kpl")
@@ -804,11 +800,13 @@ void KisApplication::remoteArguments(QByteArray message, QObject *socket)
 
 void KisApplication::fileOpenRequested(const QString &url)
 {
-    KisMainWindow *mainWindow = KisPart::instance()->mainWindows().first();
-    if (mainWindow) {
-        KisMainWindow::OpenFlags flags = d->batchRun ? KisMainWindow::BatchMode : KisMainWindow::None;
-        mainWindow->openDocument(QUrl::fromLocalFile(url), flags);
+    if (!d->mainWindow) {
+        d->earlyFileOpenEvents.append(url);
+        return;
     }
+
+    KisMainWindow::OpenFlags flags = d->batchRun ? KisMainWindow::BatchMode : KisMainWindow::None;
+    d->mainWindow->openDocument(QUrl::fromLocalFile(url), flags);
 }
 
 

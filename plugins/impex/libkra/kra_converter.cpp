@@ -135,7 +135,7 @@ QVector<StoryboardComment> KraConverter::storyboardCommentList()
     return m_storyboardCommentList;
 }
 
-KisImportExportErrorCode KraConverter::buildFile(QIODevice *io, const QString &filename)
+KisImportExportErrorCode KraConverter::buildFile(QIODevice *io, const QString &filename, bool addMergedImage)
 {
     if (m_image->size().isEmpty()) {
         return ImportExportCodes::Failure;
@@ -151,7 +151,7 @@ KisImportExportErrorCode KraConverter::buildFile(QIODevice *io, const QString &f
 
     setProgress(20);
 
-    m_kraSaver = new KisKraSaver(m_doc, filename);
+    m_kraSaver = new KisKraSaver(m_doc, filename, addMergedImage);
 
     KisImportExportErrorCode resultCode = saveRootDocuments(m_store);
 
@@ -167,7 +167,7 @@ KisImportExportErrorCode KraConverter::buildFile(QIODevice *io, const QString &f
         qWarning() << "saving key frames failed";
     }
     setProgress(60);
-    result = m_kraSaver->saveBinaryData(m_store, m_image, m_doc->url().toLocalFile(), true, m_doc->isAutosaving());
+    result = m_kraSaver->saveBinaryData(m_store, m_image, m_doc->url().toLocalFile(), true, addMergedImage);
     if (!result) {
         qWarning() << "saving binary data failed";
     }
@@ -263,7 +263,7 @@ QDomDocument KraConverter::createDomDocument()
     QDomElement root = doc.documentElement();
 
     root.setAttribute("editor", "Krita");
-    root.setAttribute("syntaxVersion", "2");
+    root.setAttribute("syntaxVersion", CURRENT_DTD_VERSION);
     root.setAttribute("kritaVersion", KritaVersionWrapper::versionString(false));
 
     root.appendChild(m_kraSaver->saveXML(doc, m_image));

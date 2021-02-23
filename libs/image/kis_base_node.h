@@ -26,8 +26,6 @@ class KisKeyframeChannel;
 
 #include "kritaimage_export.h"
 
-
-
 /**
  * A KisBaseNode is the base class for all components of an image:
  * nodes, layers masks, selections. A node has a number of properties,
@@ -598,6 +596,7 @@ public:
 
 Q_SIGNALS:
     void keyframeChannelAdded(KisKeyframeChannel *channel);
+    void opacityChanged(quint8 value);
 
 private:
 

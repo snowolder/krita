@@ -35,6 +35,8 @@
 #include "kis_keyframe_channel.h"
 #include "kis_raster_keyframe_channel.h"
 #include "kis_projection_leaf.h"
+#include "kis_scalar_keyframe_channel.h"
+#include "kis_time_span.h"
 #include "kis_command_utils.h"
 #include "commands_new/kis_change_projection_color_command.h"
 #include "kis_layer_properties_icons.h"
@@ -274,7 +276,7 @@ namespace KisLayerUtils {
     private:
         KisNodeSP m_sourceNode;
         KisNodeSP m_targetNode;
-        KisImageSP m_image;
+        KisImageWSP m_image;
         KisPaintDeviceSP m_sourcePaintDevice;
         QSet<int> m_frames;
         bool m_putBehind;
@@ -463,7 +465,7 @@ namespace KisLayerUtils {
         }
 
     private:
-        KisImageSP m_image;
+        KisImageWSP m_image;
         KisNodeList m_nodes;
     };
 
@@ -1247,10 +1249,34 @@ namespace KisLayerUtils {
     };
 
     QSet<int> fetchLayerFrames(KisNodeSP node) {
-        KisKeyframeChannel *channel = node->getKeyframeChannel(KisKeyframeChannel::Raster.id());
-        if (!channel) return QSet<int>();
+        QSet<int> frames;
+        Q_FOREACH(KisKeyframeChannel *channel, node->keyframeChannels()) {
+            if (!channel) {
+                continue;
+            }
 
-        return channel->allKeyframeTimes();
+            KisRasterKeyframeChannel *rasterChan = dynamic_cast<KisRasterKeyframeChannel*>(channel);
+            if (rasterChan) {
+                frames.unite(channel->allKeyframeTimes());
+                continue;
+            }
+
+            KisScalarKeyframeChannel *scalarChan = dynamic_cast<KisScalarKeyframeChannel*>(channel);
+            if (scalarChan) {
+                const int initialKeyframe = scalarChan->firstKeyframeTime();
+                const int lastKeyframe = scalarChan->lastKeyframeTime();
+                KisTimeSpan currentSpan = scalarChan->identicalFrames(initialKeyframe);
+                while (!currentSpan.isInfinite() && currentSpan.isValid() && currentSpan.start() < lastKeyframe) {
+                    frames.insert(currentSpan.start());
+                    currentSpan = scalarChan->identicalFrames(currentSpan.end() + 1);
+                }
+
+                frames.insert(lastKeyframe);
+            }
+
+        }
+
+        return frames;
     }
 
     QSet<int> fetchLayerFramesRecursive(KisNodeSP rootNode) {
@@ -1342,7 +1368,7 @@ namespace KisLayerUtils {
                     applicator.applyCommand(new RefreshDelayedUpdateLayers(info), KisStrokeJobData::BARRIER);
                     applicator.applyCommand(new MergeLayers(info), KisStrokeJobData::BARRIER);
 
-                    applicator.applyCommand(new SwitchFrameCommand(info->image, frame, true, info->storage));
+                    applicator.applyCommand(new SwitchFrameCommand(info->image, frame, true, info->storage), KisStrokeJobData::BARRIER);
                 }
             } else {
                 applicator.applyCommand(new RefreshHiddenAreas(info));

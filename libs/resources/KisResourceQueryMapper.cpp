@@ -17,6 +17,27 @@
 #include "KisResourceModelProvider.h"
 #include "KisTag.h"
 
+
+
+QImage KisResourceQueryMapper::getThumbnailFromQuery(const QSqlQuery &query)
+{
+    QString storageLocation = query.value("location").toString();
+    QString resourceType = query.value("resource_type").toString();
+    QString filename = query.value("filename").toString();
+
+    QImage img = KisResourceLocator::instance()->thumbnailCached(storageLocation, resourceType, filename);
+    if (!img.isNull()) {
+        return img;
+    } else {
+        QByteArray ba = query.value("thumbnail").toByteArray();
+        QBuffer buf(&ba);
+        buf.open(QBuffer::ReadOnly);
+        img.load(&buf, "PNG");
+        KisResourceLocator::instance()->cacheThumbnail(storageLocation, resourceType, filename, img);
+        return img;
+    }
+}
+
 QVariant KisResourceQueryMapper::variantFromResourceQuery(const QSqlQuery &query, int column, int role)
 {
     const QString resourceType = query.value("resource_type").toString();
@@ -37,12 +58,7 @@ QVariant KisResourceQueryMapper::variantFromResourceQuery(const QSqlQuery &query
             return query.value("tooltip");
         case KisAbstractResourceModel::Thumbnail:
         {
-            QByteArray ba = query.value("thumbnail").toByteArray();
-            QBuffer buf(&ba);
-            buf.open(QBuffer::ReadOnly);
-            QImage img;
-            img.load(&buf, "PNG");
-            return QVariant::fromValue<QImage>(img);
+            return QVariant::fromValue<QImage>(getThumbnailFromQuery(query));
         }
         case KisAbstractResourceModel::Status:
             return query.value("status");
@@ -62,14 +78,7 @@ QVariant KisResourceQueryMapper::variantFromResourceQuery(const QSqlQuery &query
     case Qt::DecorationRole:
     {
         if (column == KisAbstractResourceModel::Thumbnail) {
-            QByteArray ba = query.value("thumbnail").toByteArray();
-            Q_ASSERT(!ba.isEmpty());
-            QBuffer buf(&ba);
-            buf.open(QBuffer::ReadOnly);
-            QImage img;
-            img.load(&buf, "PNG");
-            Q_ASSERT(!img.isNull());
-            return QVariant::fromValue<QImage>(img);
+            return QVariant::fromValue<QImage>(getThumbnailFromQuery(query));
         }
         return QVariant();
     }
@@ -91,12 +100,7 @@ QVariant KisResourceQueryMapper::variantFromResourceQuery(const QSqlQuery &query
         return query.value("tooltip");
     case Qt::UserRole + KisAbstractResourceModel::Thumbnail:
     {
-        QByteArray ba = query.value("thumbnail").toByteArray();
-        QBuffer buf(&ba);
-        buf.open(QBuffer::ReadOnly);
-        QImage img;
-        img.load(&buf, "PNG");
-        return QVariant::fromValue<QImage>(img);
+        return QVariant::fromValue<QImage>(getThumbnailFromQuery(query));
     }
     case Qt::UserRole + KisAbstractResourceModel::Status:
         return query.value("status");
@@ -106,9 +110,9 @@ QVariant KisResourceQueryMapper::variantFromResourceQuery(const QSqlQuery &query
         return query.value("resource_type");
     case Qt::UserRole + KisAbstractResourceModel::Tags:
     {
-        KisResourceModel resourceModel(resourceType);
+        KisAllResourcesModel *resourceModel = KisResourceModelProvider::resourceModel(resourceType);
         QStringList tagNames;
-        Q_FOREACH(const KisTagSP tag, resourceModel.tagsForResource(query.value("id").toInt())) {
+        Q_FOREACH(const KisTagSP tag, resourceModel->tagsForResource(query.value("id").toInt())) {
             tagNames << tag->name();
         }
         return tagNames;
@@ -124,8 +128,7 @@ QVariant KisResourceQueryMapper::variantFromResourceQuery(const QSqlQuery &query
         }
         else {
             // Now we have to check the resource, but that's cheap since it's been loaded in any case
-            KisResourceModel resourceModel(resourceType);
-            KoResourceSP resource = resourceModel.resourceForId(query.value("id").toInt());
+            KoResourceSP resource = KisResourceLocator::instance()->resourceForId(query.value("id").toInt());
             return resource->isDirty();
         }
     }

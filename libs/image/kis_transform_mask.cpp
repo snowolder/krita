@@ -32,6 +32,8 @@
 #include "kis_algebra_2d.h"
 #include "kis_safe_transform.h"
 #include "kis_keyframe_channel.h"
+#include "kis_raster_keyframe_channel.h"
+#include "kis_scalar_keyframe_channel.h"
 
 #include "kis_image_config.h"
 #include "kis_lod_capable_layer_offset.h"
@@ -56,9 +58,10 @@ struct Q_DECL_HIDDEN KisTransformMask::Private
 
     Private(const Private &rhs)
         : worker(rhs.worker),
-          params(rhs.params),
+          params(rhs.params->clone()),
           staticCacheValid(rhs.staticCacheValid),
           recalculatingStaticImage(rhs.recalculatingStaticImage),
+          staticCacheDevice(nullptr),
           offset(rhs.offset),
           updateSignalCompressor(UPDATE_DELAY, KisSignalCompressor::POSTPONE),
           offBoundsReadArea(rhs.offBoundsReadArea)
@@ -115,6 +118,16 @@ KisTransformMask::KisTransformMask(const KisTransformMask& rhs)
       m_d(new Private(*rhs.m_d))
 {
     connect(&m_d->updateSignalCompressor, SIGNAL(timeout()), SLOT(slotDelayedStaticUpdate()));
+
+    KisAnimatedTransformParamsInterface* rhsAniTransform = dynamic_cast<KisAnimatedTransformParamsInterface*>(rhs.m_d->params.data());
+    KisAnimatedTransformParamsInterface* aniTransform = dynamic_cast<KisAnimatedTransformParamsInterface*>(m_d->params.data());
+    if(rhsAniTransform && aniTransform) {
+        QList<KisKeyframeChannel*> chans;
+        chans = aniTransform->copyChannelsFrom(rhsAniTransform);
+        foreach( KisKeyframeChannel* chan, chans) {
+            addKeyframeChannel(chan);
+        }
+    }
 }
 
 KisPaintDeviceSP KisTransformMask::paintDevice() const
@@ -135,6 +148,7 @@ void KisTransformMask::setTransformParams(KisTransformMaskParamsInterfaceSP para
     }
 
     m_d->params = params;
+
     m_d->reloadParameters();
 
     m_d->updateSignalCompressor.stop();
@@ -460,6 +474,18 @@ QRect KisTransformMask::exactBounds() const
     KisLayerSP parentLayer = qobject_cast<KisLayer*>(parent().data());
     if (parentLayer) {
         existentProjection = parentLayer->projection()->exactBounds();
+
+        /* Take into account multiple keyframes... */
+        if (parentLayer->original() && parentLayer->original()->defaultBounds() && parentLayer->original()->keyframeChannel()) {
+            Q_FOREACH( const int& time, parentLayer->original()->keyframeChannel()->allKeyframeTimes() ) {
+                KisRasterKeyframeSP keyframe = parentLayer->original()->keyframeChannel()->keyframeAt<KisRasterKeyframe>(time);
+                existentProjection |= keyframe->contentBounds();
+            }
+        }
+    }
+
+    if (isAnimated()) {
+        existentProjection |= changeRect(image()->bounds());
     }
 
     return changeRect(sourceDataBounds()) | existentProjection;
@@ -546,27 +572,28 @@ void KisTransformMask::slotInternalForceStaticImageUpdate()
 
 KisKeyframeChannel *KisTransformMask::requestKeyframeChannel(const QString &id)
 {
-    if (id == KisKeyframeChannel::TransformArguments.id() ||
-        id == KisKeyframeChannel::TransformPositionX.id() ||
-        id == KisKeyframeChannel::TransformPositionY.id() ||
-        id == KisKeyframeChannel::TransformScaleX.id() ||
-        id == KisKeyframeChannel::TransformScaleY.id() ||
-        id == KisKeyframeChannel::TransformShearX.id() ||
-        id == KisKeyframeChannel::TransformShearY.id() ||
-        id == KisKeyframeChannel::TransformRotationX.id() ||
-        id == KisKeyframeChannel::TransformRotationY.id() ||
-        id == KisKeyframeChannel::TransformRotationZ.id()) {
+    if (id == KisKeyframeChannel::PositionX.id() ||
+        id == KisKeyframeChannel::PositionY.id() ||
+        id == KisKeyframeChannel::ScaleX.id() ||
+        id == KisKeyframeChannel::ScaleY.id() ||
+        id == KisKeyframeChannel::ShearX.id() ||
+        id == KisKeyframeChannel::ShearY.id() ||
+        id == KisKeyframeChannel::RotationX.id() ||
+        id == KisKeyframeChannel::RotationY.id() ||
+        id == KisKeyframeChannel::RotationZ.id()) {
 
         KisAnimatedTransformParamsInterface *animatedParams = dynamic_cast<KisAnimatedTransformParamsInterface*>(m_d->params.data());
 
         if (!animatedParams) {
-            auto converted = KisTransformMaskParamsFactoryRegistry::instance()->animateParams(m_d->params);
+            auto converted = KisTransformMaskParamsFactoryRegistry::instance()->animateParams(m_d->params, this);
             if (converted.isNull()) return KisEffectMask::requestKeyframeChannel(id);
             m_d->params = converted;
             animatedParams = dynamic_cast<KisAnimatedTransformParamsInterface*>(converted.data());
         }
 
-        KisKeyframeChannel *channel = animatedParams->getKeyframeChannel(id, parent());
+        KisKeyframeChannel *channel = animatedParams->requestKeyframeChannel(id, this);
+        channel->setNode(this);
+        channel->setDefaultBounds(new KisDefaultBounds(this->image()));
         if (channel) return channel;
     }
 
@@ -575,16 +602,15 @@ KisKeyframeChannel *KisTransformMask::requestKeyframeChannel(const QString &id)
 
 bool KisTransformMask::supportsKeyframeChannel(const QString &id)
 {
-    if (id == KisKeyframeChannel::TransformArguments.id() ||
-        id == KisKeyframeChannel::TransformPositionX.id() ||
-        id == KisKeyframeChannel::TransformPositionY.id() ||
-        id == KisKeyframeChannel::TransformScaleX.id() ||
-        id == KisKeyframeChannel::TransformScaleY.id() ||
-        id == KisKeyframeChannel::TransformShearX.id() ||
-        id == KisKeyframeChannel::TransformShearY.id() ||
-        id == KisKeyframeChannel::TransformRotationX.id() ||
-        id == KisKeyframeChannel::TransformRotationY.id() ||
-            id == KisKeyframeChannel::TransformRotationZ.id()) {
+    if (id == KisKeyframeChannel::PositionX.id() ||
+        id == KisKeyframeChannel::PositionY.id() ||
+        id == KisKeyframeChannel::ScaleX.id() ||
+        id == KisKeyframeChannel::ScaleY.id() ||
+        id == KisKeyframeChannel::ShearX.id() ||
+        id == KisKeyframeChannel::ShearY.id() ||
+        id == KisKeyframeChannel::RotationX.id() ||
+        id == KisKeyframeChannel::RotationY.id() ||
+            id == KisKeyframeChannel::RotationZ.id()) {
         return true;
     }
     else if (id == KisKeyframeChannel::Opacity.id()) {

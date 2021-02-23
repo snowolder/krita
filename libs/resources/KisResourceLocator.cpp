@@ -46,6 +46,7 @@ public:
     QString resourceLocation;
     QMap<QString, KisResourceStorageSP> storages;
     QHash<QPair<QString, QString>, KoResourceSP> resourceCache;
+    QMap<QPair<QString, QString>, QImage> thumbnailCache;
     QStringList errorMessages;
 };
 
@@ -148,6 +149,24 @@ bool KisResourceLocator::resourceCached(QString storageLocation, const QString &
     return d->resourceCache.contains(key);
 }
 
+void KisResourceLocator::cacheThumbnail(QString storageLocation, const QString &resourceType, const QString &filename,
+                                        const QImage &img) {
+    storageLocation = makeStorageLocationAbsolute(storageLocation);
+    QPair<QString, QString> key = QPair<QString, QString> (storageLocation, resourceType + "/" + filename);
+
+    d->thumbnailCache[key] = img;
+}
+
+QImage KisResourceLocator::thumbnailCached(QString storageLocation, const QString &resourceType, const QString &filename)
+{
+    storageLocation = makeStorageLocationAbsolute(storageLocation);
+    QPair<QString, QString> key = QPair<QString, QString> (storageLocation, resourceType + "/" + filename);
+    if (d->thumbnailCache.contains(key)) {
+        return d->thumbnailCache[key];
+    }
+    return QImage();
+}
+
 void KisResourceLocator::loadRequiredResources(KoResourceSP resource)
 {
     QList<KoResourceSP> requiredResources = resource->requiredResources(KisGlobalResourcesInterface::instance());
@@ -161,6 +180,7 @@ void KisResourceLocator::loadRequiredResources(KoResourceSP resource)
 
 KoResourceSP KisResourceLocator::resource(QString storageLocation, const QString &resourceType, const QString &filename)
 {
+
     storageLocation = makeStorageLocationAbsolute(storageLocation);
 
     QPair<QString, QString> key = QPair<QString, QString> (storageLocation, resourceType + "/" + filename);
@@ -259,6 +279,9 @@ bool KisResourceLocator::setResourceActive(int resourceId, bool active)
     QPair<QString, QString> key = QPair<QString, QString> (rs.storageLocation, rs.resourceType + "/" + rs.resourceFileName);
 
     d->resourceCache.remove(key);
+    if (!active && d->thumbnailCache.contains(key)) {
+        d->thumbnailCache.remove(key);
+    }
 
     return KisResourceCacheDb::setResourceActive(resourceId, active);
 }
@@ -334,6 +357,9 @@ bool KisResourceLocator::updateResource(const QString &resourceType, const KoRes
 
     if (!storage->supportsVersioning()) return false;
 
+    // remove older version
+    d->thumbnailCache.remove(QPair<QString, QString> (storageLocation, resourceType + "/" + resource->filename()));
+
     resource->updateThumbnail();
     resource->setVersion(resource->version() + 1);
 
@@ -352,8 +378,9 @@ bool KisResourceLocator::updateResource(const QString &resourceType, const KoRes
     }
 
     // Update the resource in the cache
-    QPair<QString, QString> key = QPair<QString, QString> (storageLocation, resourceType + "/" + QFileInfo(resource->filename()).fileName());
+    QPair<QString, QString> key = QPair<QString, QString> (storageLocation, resourceType + "/" + resource->filename());
     d->resourceCache[key] = resource;
+    d->thumbnailCache[key] = resource->thumbnail();
 
     return true;
 }
@@ -376,7 +403,7 @@ bool KisResourceLocator::reloadResource(const QString &resourceType, const KoRes
     resource->setDirty(false);
 
     // We haven't changed the version of the resource, so the cache must be still valid
-    QPair<QString, QString> key = QPair<QString, QString> (storageLocation, resourceType + "/" + QFileInfo(resource->filename()).fileName());
+    QPair<QString, QString> key = QPair<QString, QString> (storageLocation, resourceType + "/" + resource->filename());
     Q_ASSERT(d->resourceCache[key] == resource);
 
     return true;
@@ -435,7 +462,7 @@ bool KisResourceLocator::addStorage(const QString &storageLocation, KisResourceS
         d->errorMessages.append(i18n("Could not add %1 to the database", storage->location()));
         return false;
     }
-    emit storageAdded(storage->location());
+    emit storageAdded(makeStorageLocationRelative(storage->location()));
     return true;
 }
 
